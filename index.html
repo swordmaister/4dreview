@@ -3,10 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D World Viewer - Pro</title>
+    <title>3D World Viewer - Pro (Touch Fix)</title>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: sans-serif; }
+        
+        /* コンテナ設定：ここが重要 */
         #container { display: flex; height: 100vh; width: 100vw; }
+        
+        /* キャンバスコンテナに touch-action: none を設定して、
+           ブラウザの標準ズーム/スクロールを無効化し、Three.jsにイベントを渡す */
+        #viewer-pane, #canvas-container, canvas {
+            touch-action: none; 
+            outline: none;
+        }
         
         /* エディタエリア */
         #editor-pane { width: 350px; background: #1e1e1e; display: flex; flex-direction: column; border-right: 1px solid #444; z-index: 10; transition: transform 0.3s ease; }
@@ -49,7 +58,6 @@
         #close-btn { position: absolute; top: 15px; left: 15px; width: 44px; height: 44px; background: rgba(200, 50, 50, 0.8); color: white; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; font-size: 24px; cursor: pointer; display: none; z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
         body.fullscreen-mode #close-btn { display: flex; }
 
-        /* スクロールバー */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #1e1e1e; }
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
@@ -68,7 +76,7 @@
             <button class="btn-fs" onclick="toggleFS()" title="全画面表示">全画面</button>
         </div>
         <div class="toolbar" style="padding-top:0;">
-            <label title="標準カメラ操作の有効/無効"><input type="checkbox" id="chk-orbit" checked onchange="toggleOrbit()">Orbit(Cam)</label>
+            <label title="カメラ操作の有効/無効"><input type="checkbox" id="chk-orbit" checked onchange="toggleOrbit()">Orbit(Cam)</label>
             <label class="file-label" title="ファイルを開く">📂<input type="file" onchange="loadFile(this)" style="display:none"></label>
             <button class="btn-action" onclick="copyCode()">Copy</button>
             <button class="btn-action" onclick="pasteCode()">Paste</button>
@@ -80,37 +88,38 @@
                 <input type="text" id="script-title" placeholder="Script Title...">
                 <button class="btn-action" onclick="saveScript()">Save</button>
             </div>
-            <div id="script-list">
-                </div>
+            <div id="script-list"></div>
         </div>
         
         <textarea id="code-editor" spellcheck="false" placeholder="// コードを入力...">
-// --- サンプル: 自動回転キューブ ---
-// カメラ操作(Orbit)をOFFにすると
-// update関数内の制御が優先されます
+// --- サンプル: カメラ操作テスト ---
 
-const geometry = new THREE.BoxGeometry();
-const material = new THREE.MeshNormalMaterial();
-const cube = new THREE.Mesh(geometry, material);
-cube.position.y = 1.0;
-scene.add(cube);
+// 1. Orbit(Cam) ON の場合:
+//    マウス/タッチで自由に回転・ズームできます。
+//    コード内の camera.position 設定は無視されます。
 
-const grid = new THREE.GridHelper(20, 20);
-scene.add(grid);
+// 2. Orbit(Cam) OFF の場合:
+//    以下のコードによるカメラ制御が有効になります。
 
-// カメラ位置をセット
-camera.position.set(3, 3, 3);
-camera.lookAt(0, 0, 0);
+const geo = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
+const mat = new THREE.MeshNormalMaterial();
+const mesh = new THREE.Mesh(geo, mat);
+scene.add(mesh);
+scene.add(new THREE.GridHelper(20, 20));
+
+// 初期位置
+camera.position.set(0, 2, 5);
 
 function update(t) {
-    cube.rotation.x = t * 0.001;
-    cube.rotation.y = t * 0.002;
+    mesh.rotation.x = t * 0.0005;
+    mesh.rotation.y = t * 0.001;
     
-    // Orbit(Cam)のチェックを外すと
-    // 以下のカメラ移動が有効になります
-    // camera.position.x = Math.sin(t*0.001) * 5;
-    // camera.position.z = Math.cos(t*0.001) * 5;
-    // camera.lookAt(0, 0, 0);
+    // OrbitがOFFの時だけ、スクリプトでカメラを動かす例
+    // (ONの時にこれをやるとガタガタ震えます)
+    if (!controls.enabled) {
+        // camera.position.x = Math.sin(t * 0.0005) * 5;
+        // camera.lookAt(0, 0, 0);
+    }
 }
 </textarea>
     </div>
@@ -125,95 +134,50 @@ function update(t) {
     let scene, camera, renderer, controls, updateFunc = null;
     const STORAGE_KEY = '3d_viewer_scripts';
 
-    // --- Script Management System ---
-    function getSavedScripts() {
-        try {
-            return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-        } catch(e) { return []; }
-    }
-
+    // --- Script Management (変更なし) ---
+    function getSavedScripts() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch(e) { return []; } }
     function renderScriptList() {
         const list = document.getElementById('script-list');
         list.innerHTML = '';
         const scripts = getSavedScripts();
-        
-        if(scripts.length === 0) {
-            list.innerHTML = '<div style="color:#666; font-size:10px; padding:4px;">No saved scripts</div>';
-            return;
-        }
-
+        if(scripts.length === 0) { list.innerHTML = '<div style="color:#666; font-size:10px; padding:4px;">No saved scripts</div>'; return; }
         scripts.forEach((item, index) => {
             const div = document.createElement('div');
             div.className = 'script-item';
-            div.innerHTML = `
-                <span class="script-name" onclick="loadScript(${index})" title="クリックでロード">${item.title}</span>
-                <button class="btn-xs btn-load" onclick="loadScript(${index})">Load</button>
-                <button class="btn-xs btn-del" onclick="deleteScript(${index})">✕</button>
-            `;
+            div.innerHTML = `<span class="script-name" onclick="loadScript(${index})">${item.title}</span><button class="btn-xs btn-load" onclick="loadScript(${index})">Load</button><button class="btn-xs btn-del" onclick="deleteScript(${index})">✕</button>`;
             list.appendChild(div);
         });
     }
-
     function saveScript() {
         const titleInput = document.getElementById('script-title');
         const code = document.getElementById('code-editor').value;
         const title = titleInput.value.trim() || 'Untitled ' + new Date().toLocaleTimeString();
-        
         const scripts = getSavedScripts();
-        scripts.unshift({ title: title, code: code, date: new Date().toISOString() }); // 新しいものを上に
+        scripts.unshift({ title: title, code: code, date: new Date().toISOString() });
         localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts));
-        
-        titleInput.value = '';
-        renderScriptList();
+        titleInput.value = ''; renderScriptList();
     }
-
     function loadScript(index) {
         const scripts = getSavedScripts();
         if(scripts[index]) {
-            if(document.getElementById('code-editor').value !== scripts[index].code) {
-                if(!confirm('現在のコードを上書きしてロードしますか？')) return;
-            }
+            if(document.getElementById('code-editor').value !== scripts[index].code && !confirm('上書きしてロードしますか？')) return;
             document.getElementById('code-editor').value = scripts[index].code;
             document.getElementById('script-title').value = scripts[index].title;
             runCode();
         }
     }
-
-    function deleteScript(index) {
-        if(!confirm('このスクリプトを削除しますか？')) return;
-        const scripts = getSavedScripts();
-        scripts.splice(index, 1);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts));
-        renderScriptList();
-    }
+    function deleteScript(index) { if(confirm('削除しますか？')) { const s = getSavedScripts(); s.splice(index, 1); localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); renderScriptList(); } }
 
     // --- UI Logic ---
-    function copyCode() {
-        const t = document.getElementById('code-editor');
-        t.select();
-        navigator.clipboard.writeText(t.value).then(() => { /* alertなしで静かにコピー */ });
+    function copyCode() { const t = document.getElementById('code-editor'); t.select(); navigator.clipboard.writeText(t.value); }
+    async function pasteCode() { try { document.getElementById('code-editor').value = await navigator.clipboard.readText(); } catch(e) { alert('Ctrl+Vで貼り付けてください'); } }
+    function clearCode() { if(confirm('消去しますか？')) document.getElementById('code-editor').value = ''; }
+    
+    function toggleFS() { 
+        document.body.classList.toggle('fullscreen-mode'); 
+        setTimeout(resizeRenderer, 350); 
     }
-
-    async function pasteCode() {
-        try {
-            const text = await navigator.clipboard.readText();
-            document.getElementById('code-editor').value = text; 
-        } catch(e) {
-            alert('ペースト権限エラー: Ctrl+Vを使用してください');
-        }
-    }
-
-    function clearCode() {
-        if(confirm('エディタの内容を消去しますか？')) {
-            document.getElementById('code-editor').value = '';
-        }
-    }
-
-    function toggleFS() {
-        document.body.classList.toggle('fullscreen-mode');
-        setTimeout(resizeRenderer, 350);
-    }
-
+    
     function resizeRenderer() {
         const container = document.getElementById('viewer-pane');
         const w = container.clientWidth;
@@ -238,13 +202,16 @@ function update(t) {
         reader.readAsText(file);
     }
 
+    // --- Controls Control ---
     function toggleOrbit() {
-        if(controls) {
-            controls.enabled = document.getElementById('chk-orbit').checked;
-        }
+        if(!controls) return;
+        const isEnabled = document.getElementById('chk-orbit').checked;
+        controls.enabled = isEnabled;
+        // enabled切り替え時に余計な慣性が残らないように更新を一回止めるなどの処置は
+        // OrbitControls内部でenabledフラグにより処理されるため、基本的にはこれだけでOK
     }
 
-    // --- Three.js Initialization ---
+    // --- Three.js Init ---
     function init() {
         if (typeof THREE === 'undefined') { setTimeout(init, 100); return; }
         
@@ -259,70 +226,72 @@ function update(t) {
         renderer.xr.enabled = true;
         renderer.shadowMap.enabled = true;
         
-        document.getElementById('canvas-container').appendChild(renderer.domElement);
+        const container = document.getElementById('canvas-container');
+        container.appendChild(renderer.domElement);
         
         if (typeof VRButton !== 'undefined') {
             document.body.appendChild(VRButton.createButton(renderer));
         }
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; // 慣性を有効化
+        controls.dampingFactor = 0.05;
         controls.target.set(0, 1.6, 0);
-        
-        // アニメーションループ
+
+        // ループ
         renderer.setAnimationLoop((time) => {
             if (updateFunc) {
-                try { updateFunc(time); } catch(e) { 
-                    console.error(e); 
-                    updateFunc = null; // エラー時はループ停止
-                }
+                try { updateFunc(time); } catch(e) { console.error(e); updateFunc = null; }
             }
             
-            // OrbitControlsが有効な場合のみ更新
+            // Orbitが有効な時だけcontrols.update()を呼ぶ
             if (controls && controls.enabled) {
                 controls.update();
             }
-
+            
             renderer.render(scene, camera);
         });
 
         window.addEventListener('resize', resizeRenderer);
-        
-        renderScriptList(); // 保存済みリスト表示
+        renderScriptList();
         runCode();
     }
 
-    // --- Code Execution ---
+    // --- Run Code (Fixes applied here) ---
     function runCode() {
         const code = document.getElementById('code-editor').value;
         
-        // 1. Reset Scene
         while(scene.children.length > 0){ scene.remove(scene.children[0]); }
         
-        // 2. Reset Camera & Controls
-        // デフォルトの状態に戻す
-        controls.reset();
-        controls.enabled = document.getElementById('chk-orbit').checked;
-        camera.position.set(0, 1.6, 5);
-        camera.rotation.set(0, 0, 0);
-        controls.target.set(0, 1.6, 0);
+        // ★ 実行時にControlsの設定を健全な状態にリセット
+        if(controls) {
+            controls.reset();
+            controls.minDistance = 0; // 距離制限解除
+            controls.maxDistance = Infinity; // 距離制限解除
+            controls.minPolarAngle = 0; // 角度制限解除
+            controls.maxPolarAngle = Math.PI; // 角度制限解除
+            controls.enableZoom = true; // ズーム有効化
+            controls.enableRotate = true; // 回転有効化
+            controls.enablePan = true; // パン有効化
+            
+            // UIの状態と同期
+            controls.enabled = document.getElementById('chk-orbit').checked;
+            
+            // カメラ位置リセット
+            camera.position.set(0, 1.6, 5);
+            camera.rotation.set(0, 0, 0);
+            controls.target.set(0, 1.6, 0);
+            controls.update();
+        }
 
         updateFunc = null;
 
         try {
-            const f = new Function('scene', 'camera', 'renderer', 'THREE', code + '\n return typeof update!=="undefined"?update:null;');
-            updateFunc = f(scene, camera, renderer, THREE);
-            
-            // コード実行直後に、もしコード内でカメラ位置が変更されていた場合、
-            // OrbitControlsのターゲットなどを調整して「ガクッ」とならないようにする
-            if(controls.enabled) {
-                controls.saveState(); // 現在位置を保存
-                controls.update();
-            }
-            
+            const f = new Function('scene', 'camera', 'renderer', 'controls', 'THREE', code + '\n return typeof update!=="undefined"?update:null;');
+            // controls も引数として渡すことで、スクリプト内から controls.autoRotate = true なども可能にする
+            updateFunc = f(scene, camera, renderer, controls, THREE);
         } catch (e) { 
             console.error(e); 
-            // エラー表示はうざいのでコンソールのみにするか、簡易アラート
-            // alert("Error: " + e.message); 
         }
     }
 
